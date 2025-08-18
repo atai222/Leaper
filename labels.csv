@@ -1,3 +1,4 @@
-video_name,hop_start,hop_end,step_start,step_end,jump_start,jump_end
-video1_filename.mp4,125,140,180,195,230,247
-another_video.mp4,110,128,170,186,215,235
+video_name,hop_start,hop_end,step_start,step_end,jump_start,jump_end,hop_dist_m,step_dist_m,jump_dist_m,takeoff_loss_m
+WC_2017_Duranona_JUMP1_annotated.mp4,80,83,98,101,113,117,6.15,4.78,5.49,0.004
+WC_2017_Benard_JUMP1_annotated.mp4,85,87,101,103,118,122,5.47,5.38,5.76,0.191
+WC_2017_Copello_JUMP1_annotated.mp4,85,88,102,105,118,121,5.87,5.29,6.00,0.016

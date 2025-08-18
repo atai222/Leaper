@@ -1,1 +1,19 @@
+# Python virtual environment
 venv/
+
+# Large data files that can be regenerated
+data/raw_videos/
+data/processed_csvs/
+
+# Annotated videos for labeling
+reports/annotated_videos/
+
+# Saved models (can be large)
+models/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# System-specific files (macOS)
+.DS_Store
