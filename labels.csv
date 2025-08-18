@@ -1,0 +1,3 @@
+video_name,hop_start,hop_end,step_start,step_end,jump_start,jump_end
+video1_filename.mp4,125,140,180,195,230,247
+another_video.mp4,110,128,170,186,215,235
