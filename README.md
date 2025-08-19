@@ -1,5 +1,5 @@
 # Leaper: A Biomechanical Analysis Tool for the Triple Jump
-
+![Triple Jump Analysis GIF](https://github.com/atai222/Leaper/blob/main/reports/CTSKELETONGIF.gif?raw=true)
 
 ## Overview
 
