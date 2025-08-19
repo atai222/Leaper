@@ -5,118 +5,120 @@ from tqdm import tqdm
 
 # --- CONFIGURATION ---
 LABELS_FILE = 'labels.csv'
+CALIBRATION_FILE = 'calibration.csv'
 PROCESSED_CSVS_FOLDER = 'data/processed_csvs/'
 OUTPUT_TRAINING_FILE = 'training_data.csv'
-VIDEO_FPS = 30 # IMPORTANT: Assume all videos are 30 FPS. Change if necessary.
+VIDEO_FPS = 30
+BOARD_WIDTH_M = 0.2  # The known width of the takeoff board's short side
 
 # --- HELPER FUNCTION ---
 def calculate_angle(a, b, c):
-    """Calculates the angle between three points."""
-    a = np.array(a)
-    b = np.array(b)
-    c = np.array(c)
-    # Handle potential missing data
-    if any(val is None for val in [a, b, c]) or any(np.isnan(val) for val in np.concatenate([a,b,c])):
-        return np.nan
-    ba = a - b
-    bc = c - b
+    a = np.array(a); b = np.array(b); c = np.array(c)
+    if any(val is None for val in [a, b, c]) or any(np.isnan(val) for val in np.concatenate([a,b,c])): return np.nan
+    ba = a - b; bc = c - b
     cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
-    # Clip to avoid math errors with values slightly out of [-1, 1] range
     cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
-    angle = np.arccos(cosine_angle)
-    return np.degrees(angle)
+    return np.degrees(np.arccos(cosine_angle))
 
 # --- MAIN SCRIPT ---
 
-def create_feature_dataset():
+def create_final_feature_dataset():
     """
-    Reads labeled data and processed landmark CSVs to generate a feature set
-    for training a regression model.
+    Generates the final feature set for regression using the advanced,
+    4-point calibration data to calculate true velocity.
     """
     try:
         labels_df = pd.read_csv(LABELS_FILE)
-    except FileNotFoundError:
-        print(f"ERROR: Labels file not found at '{LABELS_FILE}'")
+        calibration_df = pd.read_csv(CALIBRATION_FILE).set_index('video_name')
+    except FileNotFoundError as e:
+        print(f"ERROR: A required file was not found: {e.filename}")
         return
 
     all_phase_features = []
 
-    print("Starting feature engineering process...")
-    # Loop through each jump in the labels file
+    print("Starting final feature engineering process...")
     for index, row in tqdm(labels_df.iterrows(), total=labels_df.shape[0], desc="Processing Jumps"):
         video_name = row['video_name']
-        csv_path = os.path.join(PROCESSED_CSVS_FOLDER, os.path.splitext(video_name)[0] + '.csv')
-
+        
         try:
-            df = pd.read_csv(csv_path)
-        except FileNotFoundError:
-            tqdm.write(f"WARNING: Data file for '{video_name}' not found. Skipping.")
+            df = pd.read_csv(os.path.join(PROCESSED_CSVS_FOLDER, f"{os.path.splitext(video_name)[0]}.csv"))
+            calib_data = calibration_df.loc[video_name]
+        except (FileNotFoundError, KeyError):
+            tqdm.write(f"WARNING: Data or calibration for '{video_name}' not found. Skipping.")
             continue
 
-        # --- Pre-calculate velocity for the whole jump ---
-        df['CoM_x'] = (df['LEFT_HIP_x'] + df['RIGHT_HIP_x']) / 2
-        df['velocity_x'] = df['CoM_x'].diff() * VIDEO_FPS # pixels/sec
-        df.fillna(0, inplace=True)
+        # --- 1. Calculate Pixels-Per-Meter Ratio from board clicks ---
+        board_p1 = np.array([calib_data['board_p1_x'], calib_data['board_p1_y']])
+        board_p2 = np.array([calib_data['board_p2_x'], calib_data['board_p2_y']])
+        board_pixel_dist = np.linalg.norm(board_p1 - board_p2)
+        pixels_per_meter = board_pixel_dist / BOARD_WIDTH_M
 
-        # Define the phases to process
-        phases = ['hop', 'step', 'jump']
-        for phase in phases:
+        # --- 2. Calculate True Entry Velocity using Cone Tracking ---
+        cone_start_frame = int(calib_data['cone_start_frame'])
+        cone_end_frame = int(calib_data['cone_end_frame'])
+        
+        # Ensure the frames are within the bounds of the dataframe
+        if cone_start_frame >= len(df) or cone_end_frame >= len(df):
+            tqdm.write(f"WARNING: Cone frames out of bounds for '{video_name}'. Skipping velocity calc.")
+            continue
+            
+        time_elapsed_s = (cone_end_frame - cone_start_frame) / VIDEO_FPS
+        if time_elapsed_s <= 0:
+            tqdm.write(f"WARNING: Invalid time window for '{video_name}'. Skipping velocity calc.")
+            continue
+
+        # Calculate camera pan speed
+        camera_pan_pixels = calib_data['cone_end_x'] - calib_data['cone_start_x']
+        camera_pan_speed_pps = camera_pan_pixels / time_elapsed_s # pixels / sec
+
+        # Calculate athlete's speed relative to the camera frame
+        df['CoM_x'] = (df['LEFT_HIP_x'] + df['RIGHT_HIP_x']) / 2
+        athlete_com_start = df.loc[cone_start_frame]['CoM_x']
+        athlete_com_end = df.loc[cone_end_frame]['CoM_x']
+        athlete_pixel_change = athlete_com_end - athlete_com_start
+        athlete_speed_pps = athlete_pixel_change / time_elapsed_s
+
+        # Calculate true ground speed
+        true_speed_pps = athlete_speed_pps - camera_pan_speed_pps
+        entry_velocity_mps = true_speed_pps / pixels_per_meter
+
+        # --- 3. Process each phase for this jump ---
+        for phase in ['hop', 'step', 'jump']:
             start_frame = int(row[f'{phase}_start'])
             end_frame = int(row[f'{phase}_end'])
-            
-            # Isolate the data for the current phase (ground contact)
             phase_df = df.iloc[start_frame:end_frame + 1].copy()
-            if phase_df.empty:
-                continue
+            if phase_df.empty: continue
 
-            # --- Feature Calculation ---
             features = {}
             features['video_name'] = video_name
             features['phase_type'] = phase
-            
-            # 1. Contact Time
+            features['entry_velocity_mps'] = entry_velocity_mps
+
+            # Feature: Contact Time
             features['contact_time_s'] = (end_frame - start_frame) / VIDEO_FPS
 
-            # 2. Horizontal Velocity Loss (Force Loss)
-            v_in = df.loc[max(0, start_frame - 1)]['velocity_x']
-            v_out = df.loc[min(len(df) - 1, end_frame + 1)]['velocity_x']
-            features['horiz_velo_loss'] = v_in - v_out
-            features['entry_velocity'] = v_in
-
-            # 3. Minimum Knee Angle
-            knee_angles = []
-            for i, frame_row in phase_df.iterrows():
-                # Assuming right-leg dominant for now
-                hip = [frame_row['RIGHT_HIP_x'], frame_row['RIGHT_HIP_y']]
-                knee = [frame_row['RIGHT_KNEE_x'], frame_row['RIGHT_KNEE_y']]
-                ankle = [frame_row['RIGHT_ANKLE_x'], frame_row['RIGHT_ANKLE_y']]
-                knee_angles.append(calculate_angle(hip, knee, ankle))
-            
+            # Feature: Minimum Knee Angle (assuming right-leg dominant)
+            knee_angles = [calculate_angle(
+                [fr['RIGHT_HIP_x'], fr['RIGHT_HIP_y']],
+                [fr['RIGHT_KNEE_x'], fr['RIGHT_KNEE_y']],
+                [fr['RIGHT_ANKLE_x'], fr['RIGHT_ANKLE_y']]
+            ) for _, fr in phase_df.iterrows()]
             features['min_knee_angle'] = np.nanmin(knee_angles) if knee_angles else np.nan
 
-            # 4. Center of Mass Lowering
-            # Find min CoM height during contact vs. height just before contact
-            com_y_in = df.loc[max(0, start_frame - 1)]['LEFT_HIP_y'] # Use hip as proxy
-            min_com_y_contact = phase_df['LEFT_HIP_y'].max() # Max y is lowest point
-            features['com_lowering'] = min_com_y_contact - com_y_in # In pixels
-
-            # --- Target Variable ---
+            # Target Variable
             features['distance_m'] = row[f'{phase}_dist_m']
-
             all_phase_features.append(features)
 
-    # Create and save the final training DataFrame
+    # --- 4. Save Final Dataset ---
     if all_phase_features:
         training_df = pd.DataFrame(all_phase_features)
         training_df.to_csv(OUTPUT_TRAINING_FILE, index=False)
-        print("\n--- Feature engineering complete! ---")
+        print(f"\n--- Feature engineering complete! ---")
         print(f"Successfully created '{OUTPUT_TRAINING_FILE}' with {len(training_df)} samples.")
-        print("\nHere's a sample of your new training data:")
+        print("\nSample of your new training data:")
         print(training_df.head())
     else:
-        print("No features were generated. Check your labels and data files.")
-
+        print("No features were generated.")
 
 if __name__ == "__main__":
-    create_feature_dataset()
-
+    create_final_feature_dataset()
