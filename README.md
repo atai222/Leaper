@@ -34,7 +34,7 @@ The primary goal was to build a tool that could provide actionable insights for 
 
 The project is organized into a modular structure to separate data, source code, and outputs.
 
-## ⚙️ Setup & Installation
+## Setup & Installation
 
 1.  Clone the repository:
     ```bash
@@ -53,7 +53,7 @@ The project is organized into a modular structure to separate data, source code,
 
 ---
 
-## ▶️ How to Use
+## How to Use
 
 The main tool is `analyze_new_jump.py`. To analyze a new jump:
 
@@ -69,7 +69,7 @@ The main tool is `analyze_new_jump.py`. To analyze a new jump:
     * A final printed report with the predicted phase distances.
 
 
-## 📊 Results & Key Insights
+## Results & Key Insights
 
 The final model achieved a positive **R² score of 0.283**, indicating it has legitimate predictive power and is significantly better than a baseline guess.
 
@@ -79,7 +79,7 @@ The most interesting finding came from the feature importance analysis. The mode
 
 ---
 
-## 🔮 Future Work
+## Future Work
 
 * **Increase Dataset Size:** The model's accuracy is primarily limited by the small dataset size. Adding more labeled jumps would be the most effective next step.
 * **Automate Phase Detection:** Implement the multi-class classification model to automatically find the start and end of each phase, removing the need for manual frame input.
